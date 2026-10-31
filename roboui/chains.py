@@ -6,8 +6,12 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableLambda
 
-from roboui.extractor import extract_html, wrap_in_airgap_sandbox
-from roboui.sanitizer import sanitize_pii
+try:
+    from extractor import extract_html, wrap_in_airgap_sandbox
+    from sanitizer import sanitize_pii
+except ImportError:
+    from roboui.extractor import extract_html, wrap_in_airgap_sandbox
+    from roboui.sanitizer import sanitize_pii
 
 logger = logging.getLogger("roboui.chains")
 

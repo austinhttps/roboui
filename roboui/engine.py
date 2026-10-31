@@ -11,10 +11,16 @@ from typing import List, Optional
 
 from langchain_core.language_models.fake import FakeListLLM
 
-from roboui.config import RoboUIConfig
-from roboui.chains import build_roboui_pipeline, throttle_context
-from roboui.extractor import extract_html, wrap_in_airgap_sandbox
-from roboui.sanitizer import sanitize_pii
+try:
+    from config import RoboUIConfig
+    from chains import build_roboui_pipeline, throttle_context
+    from extractor import extract_html, wrap_in_airgap_sandbox
+    from sanitizer import sanitize_pii
+except ImportError:
+    from roboui.config import RoboUIConfig
+    from roboui.chains import build_roboui_pipeline, throttle_context
+    from roboui.extractor import extract_html, wrap_in_airgap_sandbox
+    from roboui.sanitizer import sanitize_pii
 
 logger = logging.getLogger("roboui.engine")
 

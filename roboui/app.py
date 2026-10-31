@@ -1,14 +1,25 @@
 """Streamlit application for RoboUI: Local Vision Inference & Streamlit UI Integration."""
 
 import io
+import sys
 from pathlib import Path
 from typing import Optional, Tuple
 from PIL import Image
 import streamlit as st
 
-from roboui.config import RoboUIConfig
-from roboui.engine import get_engine, GenerationResult, ModelFileNotFoundError, OutOfMemoryInferenceError
-from roboui.extractor import wrap_in_airgap_sandbox
+# Ensure adjacent modules in the same directory can always be resolved
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+try:
+    from config import RoboUIConfig
+    from engine import get_engine, GenerationResult, ModelFileNotFoundError, OutOfMemoryInferenceError
+    from extractor import wrap_in_airgap_sandbox
+except ImportError:
+    from roboui.config import RoboUIConfig
+    from roboui.engine import get_engine, GenerationResult, ModelFileNotFoundError, OutOfMemoryInferenceError
+    from roboui.extractor import wrap_in_airgap_sandbox
 
 
 def validate_uploaded_image(file_bytes: bytes) -> Tuple[bool, Optional[str]]:
