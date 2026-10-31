@@ -58,3 +58,7 @@ models/*.bin
 .idea/
 .DS_Store
 Thumbs.db
+
+# Agent skills created by dev tools
+.agents/
+.claude/
