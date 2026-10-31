@@ -1,11 +1,20 @@
 """LangChain prompt templates, LCEL chaining, and context throttling for RoboUI."""
 
-from typing import Any, Dict
+import logging
+from typing import Any, Dict, Optional
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableLambda
 
+from roboui.extractor import extract_html, wrap_in_airgap_sandbox
 from roboui.sanitizer import sanitize_pii
+
+logger = logging.getLogger("roboui.chains")
+
+
+class OutOfMemoryInferenceError(RuntimeError):
+    """Raised when VRAM or host memory is exhausted during visual token generation."""
+    pass
 
 
 VISION_PROMPT_TEXT = """You are an expert multimodal UI analyzer. Examine this sketch description:
@@ -90,9 +99,10 @@ def build_roboui_pipeline(vision_llm: Any, codegen_llm: Any):
 
         # Stage 1: Vision analysis
         semantic_desc = vision_chain.invoke({"image_description": image_desc})
+        combined_text = f"{semantic_desc} (Notes: {style_notes})"
 
         # Stage 2: Intermediate PII scrubbing
-        sanitized_desc, redacted_pii = sanitize_pii(semantic_desc)
+        sanitized_desc, redacted_pii = sanitize_pii(combined_text)
 
         # Stage 3: Code generation from sanitized representation
         raw_code = codegen_chain.invoke({
@@ -108,3 +118,39 @@ def build_roboui_pipeline(vision_llm: Any, codegen_llm: Any):
         }
 
     return RunnableLambda(_execute_pipeline)
+
+
+def execute_langchain_vision_pipeline(
+    image_bytes: Optional[bytes],
+    custom_notes: str,
+    vision_llm: Any,
+    codegen_llm: Any,
+    enforce_csp: bool = True,
+    max_context_tokens: int = 2048,
+) -> Dict[str, Any]:
+    """Execute LangChain multimodal pipeline, extracting clean HTML/JS and enforcing OOM boundaries."""
+    sketch_tag = f"UI sketch payload ({len(image_bytes)} bytes)" if image_bytes else "No image payload"
+    throttled_input = throttle_context(f"{sketch_tag}. Notes: {custom_notes}", max_context_tokens)
+
+    try:
+        pipeline = build_roboui_pipeline(vision_llm, codegen_llm)
+        pipeline_output = pipeline.invoke({
+            "image_description": throttled_input,
+            "style_notes": custom_notes or "Modern clean dark theme",
+        })
+        
+        # Route raw LLM output through markdown-stripping regex
+        raw_code = pipeline_output["raw_code"]
+        clean_html = extract_html(raw_code)
+        sandboxed_html = wrap_in_airgap_sandbox(clean_html) if enforce_csp else clean_html
+
+        return {
+            "semantic_description": pipeline_output["sanitized_description"],
+            "redacted_pii": pipeline_output["redacted_pii"],
+            "raw_code": raw_code,
+            "clean_html": clean_html,
+            "sandboxed_html": sandboxed_html,
+        }
+    except (MemoryError, RuntimeError) as exc:
+        logger.error("OOM error in vision pipeline: %s", exc)
+        raise OutOfMemoryInferenceError(f"Memory exhausted during vision pipeline execution: {exc}") from exc
