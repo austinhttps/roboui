@@ -44,11 +44,15 @@ def test_gemma_vision_service_multimodal_payload_and_regex_extraction():
     messages = call_args["messages"]
     
     # Verify system prompt exists
-    assert any(m["role"] == "system" for m in messages)
+    system_msg = next(m for m in messages if m["role"] == "system")
+    assert "strict eye for 1:1 design translation" in system_msg["content"]
+    assert "Tailwind CSS grid, flexbox, and relative fractional width classes" in system_msg["content"]
     
     # Verify user message contains base64 image data URI
     user_msg = next(m for m in messages if m["role"] == "user")
     content_list = user_msg["content"]
+    text_part = next(c for c in content_list if c["type"] == "text")
+    assert "Pay strict attention to the widths, aspect ratios, and relative positioning" in text_part["text"]
     image_part = next(c for c in content_list if c["type"] == "image_url")
     assert image_part["image_url"]["url"].startswith("data:image/png;base64,")
 

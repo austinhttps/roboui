@@ -287,11 +287,18 @@ class GemmaVisionService(BaseInferenceEngine):
 
         try:
             system_prompt = (
-                "You are an expert frontend developer. Your task is to output strictly valid HTML, "
-                "Tailwind CSS, and vanilla JavaScript. Never output conversational filler, markdown "
-                "formatting tags, or explanations. Only output code."
+                "You are an expert frontend developer with a strict eye for 1:1 design translation. "
+                "Analyze the relative widths, heights, alignment, and spatial positioning of every element in the image. "
+                "You must use Tailwind CSS grid, flexbox, and relative fractional width classes "
+                "(e.g., `w-1/2`, `w-1/3`, `max-w-md`, `mx-auto`) to ensure the generated input boxes, buttons, "
+                "and text fields perfectly match the proportions, sizing, and layout of the original sketch. "
+                "Your task is to output strictly valid HTML, Tailwind CSS, and vanilla JavaScript. "
+                "Never output conversational filler, markdown formatting tags, or explanations. Only output code."
             )
-            human_text = "Translate this hand-drawn UI sketch into a responsive website using Tailwind CSS."
+            human_text = (
+                "Translate this hand-drawn UI sketch into a responsive website using Tailwind CSS. "
+                "Pay strict attention to the widths, aspect ratios, and relative positioning of the elements."
+            )
             if custom_notes:
                 human_text += f" Notes: {custom_notes}"
             sanitized_human_text, redacted_pii = sanitize_pii(human_text)
