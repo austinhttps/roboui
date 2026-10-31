@@ -23,6 +23,7 @@ class RoboUIConfig:
     mock_mode: bool = True
     max_context_tokens: int = 2048
     n_gpu_layers: int = 0
+    n_threads: Optional[int] = None
     model_path: str = r"C:\Users\Austi\gemma-4-E2B-it-UD-Q2_K_XL.gguf"
     mmproj_path: Optional[str] = r"C:\Users\Austi\mmproj-F16.gguf"
     inlined_tailwind: bool = True
@@ -42,6 +43,10 @@ class RoboUIConfig:
         # GPU layers
         gpu_layers_val = os.getenv("ROBOUI_N_GPU_LAYERS", "0").strip()
         n_gpu_layers = int(gpu_layers_val)
+
+        # CPU threads allocation (default: physical cores / 8 if detected)
+        threads_env = os.getenv("ROBOUI_N_THREADS")
+        n_threads = int(threads_env.strip()) if threads_env else max(1, (os.cpu_count() or 4) // 2)
 
         # Model path: explicitly check LLM_MODEL_PATH, ROBOUI_GGUF_PATH, and ROBOUI_MODEL_PATH
         model_path = (
@@ -69,6 +74,7 @@ class RoboUIConfig:
             mock_mode=mock_mode,
             max_context_tokens=max_context_tokens,
             n_gpu_layers=n_gpu_layers,
+            n_threads=n_threads,
             model_path=model_path,
             mmproj_path=mmproj_path,
             inlined_tailwind=inlined_tailwind,

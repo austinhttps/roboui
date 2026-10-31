@@ -54,3 +54,20 @@ def test_gemma_vision_service_oom_handling():
     handled = service._handle_vram_failure(MemoryError("CUDA out of memory during visual token projection"))
     assert handled is True
     assert service.config.n_gpu_layers == 0
+
+
+def test_optimize_sketch_image():
+    from PIL import Image
+    import io
+    from roboui.engine import optimize_sketch_image
+
+    img = Image.new("RGB", (1200, 1600), color="blue")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    original_bytes = buf.getvalue()
+
+    optimized = optimize_sketch_image(original_bytes, max_dim=512)
+    with Image.open(io.BytesIO(optimized)) as out_img:
+        assert max(out_img.size) <= 512
+        assert out_img.format == "JPEG"
+

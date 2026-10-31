@@ -61,13 +61,24 @@ def main():
         help="Run without local GGUF weights for dry testing.",
     )
 
+    default_config = RoboUIConfig.from_env()
+
     max_context = st.sidebar.slider(
         "Context Window Throttling (n_ctx)",
         min_value=512,
         max_value=8192,
-        value=2048,
+        value=1024,
         step=256,
-        help="Strict upper bound on context tokens to prevent VRAM exhaustion.",
+        help="Strict upper bound on context tokens to prevent VRAM exhaustion and speed up CPU generation.",
+    )
+
+    n_threads = st.sidebar.slider(
+        "CPU Threads (n_threads)",
+        min_value=1,
+        max_value=16,
+        value=default_config.n_threads or 8,
+        step=1,
+        help="Number of parallel CPU worker threads allocated for tensor operations.",
     )
 
     n_gpu_layers = st.sidebar.slider(
@@ -78,8 +89,6 @@ def main():
         step=1,
         help="Number of layers to offload to GPU VRAM via llama.cpp (0 for CPU only).",
     )
-
-    default_config = RoboUIConfig.from_env()
 
     model_path = st.sidebar.text_input(
         "BYOM Model Path (.gguf)",
@@ -140,29 +149,54 @@ def main():
         mock_mode=mock_mode,
         max_context_tokens=max_context,
         n_gpu_layers=n_gpu_layers,
+        n_threads=n_threads,
         model_path=model_path,
         mmproj_path=mmproj_path.strip() if mmproj_path.strip() else None,
         inlined_tailwind=True,
         enforce_csp=True,
     )
 
-    # Trigger Real Generation with Progress Spinner and Error Boundaries
+    # Trigger Real Generation with Streaming Output and Error Boundaries
     if generate_clicked:
-        with st.spinner("Analyzing sketch with Gemma vision and synthesizing code..."):
-            try:
-                engine = get_engine(config, fallback_to_mock=False)
-                active_image = image_bytes or st.session_state.get("uploaded_image_bytes")
-                result = engine.generate_ui(image_bytes=active_image, custom_notes=custom_notes)
-                st.session_state["generation_result"] = result
-                st.success("Web UI generated successfully!")
-            except ModelFileNotFoundError as exc:
-                st.error(f"❌ Local GGUF Model File Not Found: {exc}")
-                st.info("💡 To run on-device inference, place your .gguf model weights in the models/ directory or specify the exact path in the sidebar. You can also toggle 'Enable Mock Mode (Testing Only)' in the sidebar for offline testing.")
-            except (OutOfMemoryInferenceError, MemoryError) as oom_exc:
-                st.error(f"⚠️ GPU / VRAM Out Of Memory: {oom_exc}")
-                st.info("💡 Try reducing Context Window Throttling (n_ctx) or reducing GPU Offload Layers (n_gpu_layers) in the sidebar.")
-            except Exception as exc:
-                st.error(f"❌ Inference Failure: {exc}")
+        stream_placeholder = st.empty()
+        status_box = st.status("⚡ Running on-device Gemma inference...", expanded=True)
+        live_tokens: list[str] = []
+
+        def on_token_callback(token_str: str):
+            live_tokens.append(token_str)
+            # Show live preview of stream progress every few tokens
+            if len(live_tokens) % 8 == 0:
+                stream_placeholder.code("".join(live_tokens[-300:]), language="html")
+
+        try:
+            status_box.write("1/3 Optimizing image & projecting visual tokens...")
+            engine = get_engine(config, fallback_to_mock=False)
+            active_image = image_bytes or st.session_state.get("uploaded_image_bytes")
+            status_box.write("2/3 Generating HTML/Tailwind/JS code tokens...")
+            result = engine.generate_ui(
+                image_bytes=active_image,
+                custom_notes=custom_notes,
+                on_token=on_token_callback,
+            )
+            status_box.write("3/3 Code synthesis complete. Air-gap sandbox active.")
+            status_box.update(label="Generation Complete!", state="complete", expanded=False)
+            stream_placeholder.empty()
+            st.session_state["generation_result"] = result
+            st.success("Web UI generated successfully!")
+        except ModelFileNotFoundError as exc:
+            status_box.update(label="Model file not found", state="error", expanded=True)
+            stream_placeholder.empty()
+            st.error(f"❌ Local GGUF Model File Not Found: {exc}")
+            st.info("💡 Place your .gguf model weights at the configured path or toggle 'Enable Mock Mode (Testing Only)' in the sidebar.")
+        except (OutOfMemoryInferenceError, MemoryError) as oom_exc:
+            status_box.update(label="Out of Memory", state="error", expanded=True)
+            stream_placeholder.empty()
+            st.error(f"⚠️ GPU / VRAM Out Of Memory: {oom_exc}")
+            st.info("💡 Try reducing Context Window Throttling (n_ctx) or reducing GPU Offload Layers (n_gpu_layers) in the sidebar.")
+        except Exception as exc:
+            status_box.update(label="Inference Failure", state="error", expanded=True)
+            stream_placeholder.empty()
+            st.error(f"❌ Inference Failure: {exc}")
 
     # Output Section: Two-Column Layout (Code on left, Live Preview on right)
     result: Optional[GenerationResult] = st.session_state.get("generation_result")

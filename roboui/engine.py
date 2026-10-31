@@ -1,13 +1,15 @@
 """Inference engines for RoboUI: GemmaVisionService (multimodal llama-cpp-python) and MockInferenceEngine."""
 
 import base64
+import io
 import logging
 import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, Iterator, List, Optional
+from PIL import Image
 
 from langchain_core.language_models.fake import FakeListLLM
 
@@ -23,6 +25,25 @@ except ImportError:
     from roboui.sanitizer import sanitize_pii
 
 logger = logging.getLogger("roboui.engine")
+
+
+def optimize_sketch_image(image_bytes: bytes, max_dim: int = 512, quality: int = 85) -> bytes:
+    """Downsample and compress sketch image to accelerate CPU vision projection."""
+    if not image_bytes:
+        return image_bytes
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            # Downsample if dimensions exceed max_dim
+            if max(img.size) > max_dim:
+                img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+            rgb_img = img.convert("RGB")
+            out_buf = io.BytesIO()
+            rgb_img.save(out_buf, format="JPEG", quality=quality, optimize=True)
+            return out_buf.getvalue()
+    except Exception as exc:
+        logger.warning("Sketch image optimization failed (%s); using original bytes.", exc)
+        return image_bytes
+
 
 
 class ModelFileNotFoundError(FileNotFoundError):
@@ -58,7 +79,12 @@ class BaseInferenceEngine(ABC):
         self.config = config
 
     @abstractmethod
-    def generate_ui(self, image_bytes: Optional[bytes] = None, custom_notes: str = "") -> GenerationResult:
+    def generate_ui(
+        self,
+        image_bytes: Optional[bytes] = None,
+        custom_notes: str = "",
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> GenerationResult:
         """Run the end-to-end pipeline: vision analysis, PII scrub, code synthesis, sandbox wrapping."""
         pass
 
@@ -66,7 +92,12 @@ class BaseInferenceEngine(ABC):
 class MockInferenceEngine(BaseInferenceEngine):
     """Deterministic, zero-weight inference engine executing the LangChain pipeline."""
 
-    def generate_ui(self, image_bytes: Optional[bytes] = None, custom_notes: str = "") -> GenerationResult:
+    def generate_ui(
+        self,
+        image_bytes: Optional[bytes] = None,
+        custom_notes: str = "",
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> GenerationResult:
         start_time = time.perf_counter()
 
         sketch_status = "Uploaded wireframe sketch (PNG/JPG)" if image_bytes else "Blank sketch canvas"
@@ -215,28 +246,42 @@ class GemmaVisionService(BaseInferenceEngine):
                 except Exception as proj_err:
                     logger.warning("Failed to initialize vision projector: %s", proj_err)
 
+            threads = self.config.n_threads or max(1, (os.cpu_count() or 4) // 2)
             self.model = llama_cpp.Llama(
                 model_path=self.config.model_path,
                 n_gpu_layers=self.config.n_gpu_layers,
                 n_ctx=self.config.max_context_tokens,
+                n_threads=threads,
+                n_threads_batch=threads,
                 chat_handler=chat_handler,
             )
         except (RuntimeError, MemoryError) as exc:
             if self.config.n_gpu_layers > 0:
                 self._handle_vram_failure(exc)
                 import llama_cpp
+                threads = self.config.n_threads or max(1, (os.cpu_count() or 4) // 2)
                 self.model = llama_cpp.Llama(
                     model_path=self.config.model_path,
                     n_gpu_layers=0,
                     n_ctx=self.config.max_context_tokens,
+                    n_threads=threads,
+                    n_threads_batch=threads,
                 )
             else:
                 raise OutOfMemoryInferenceError(f"Insufficient memory to allocate model context: {exc}") from exc
 
-    def generate_ui(self, image_bytes: Optional[bytes] = None, custom_notes: str = "") -> GenerationResult:
-        """Execute multimodal UI generation with robust OOM handling."""
+    def generate_ui(
+        self,
+        image_bytes: Optional[bytes] = None,
+        custom_notes: str = "",
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> GenerationResult:
+        """Execute multimodal UI generation with robust OOM handling and optional token streaming."""
         if self._mock_delegate:
-            return self._mock_delegate.generate_ui(image_bytes=image_bytes, custom_notes=custom_notes)
+            result = self._mock_delegate.generate_ui(image_bytes=image_bytes, custom_notes=custom_notes)
+            if on_token:
+                on_token(result.html_code)
+            return result
 
         start_time = time.perf_counter()
 
@@ -253,8 +298,9 @@ class GemmaVisionService(BaseInferenceEngine):
 
             # Multimodal payload formatting if image is provided
             if image_bytes and hasattr(self.model, "create_chat_completion"):
-                mime = "image/jpeg" if (image_bytes.startswith(b"\xff\xd8") or b"JFIF" in image_bytes[:32]) else "image/png"
-                b64_img = base64.b64encode(image_bytes).decode("utf-8")
+                optimized_bytes = optimize_sketch_image(image_bytes, max_dim=512)
+                mime = "image/jpeg" if (optimized_bytes.startswith(b"\xff\xd8") or b"JFIF" in optimized_bytes[:32]) else "image/png"
+                b64_img = base64.b64encode(optimized_bytes).decode("utf-8")
                 messages = [
                     {
                         "role": "system",
@@ -268,22 +314,46 @@ class GemmaVisionService(BaseInferenceEngine):
                         ],
                     },
                 ]
-                output = self.model.create_chat_completion(
+                stream_enabled = on_token is not None
+                completion = self.model.create_chat_completion(
                     messages=messages,
                     max_tokens=self.config.max_context_tokens,
+                    stream=stream_enabled,
                 )
-                raw_text = output["choices"][0]["message"]["content"]
-                tokens_used = output.get("usage", {}).get("total_tokens", len(raw_text) // 4)
+                if stream_enabled:
+                    raw_chunks = []
+                    for chunk in completion:
+                        delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                        if delta:
+                            raw_chunks.append(delta)
+                            on_token(delta)
+                    raw_text = "".join(raw_chunks)
+                    tokens_used = len(raw_text) // 4
+                else:
+                    raw_text = completion["choices"][0]["message"]["content"]
+                    tokens_used = completion.get("usage", {}).get("total_tokens", len(raw_text) // 4)
             else:
                 # Text-prompt fallback
                 prompt = f"{system_prompt}\n\nHuman: {sanitized_human_text}"
-                output = self.model(
+                stream_enabled = on_token is not None
+                completion = self.model(
                     prompt,
                     max_tokens=self.config.max_context_tokens,
                     stop=["```\n\n"],
+                    stream=stream_enabled,
                 )
-                raw_text = output["choices"][0]["text"]
-                tokens_used = output.get("usage", {}).get("total_tokens", len(raw_text) // 4)
+                if stream_enabled:
+                    raw_chunks = []
+                    for chunk in completion:
+                        delta = chunk.get("choices", [{}])[0].get("text", "")
+                        if delta:
+                            raw_chunks.append(delta)
+                            on_token(delta)
+                    raw_text = "".join(raw_chunks)
+                    tokens_used = len(raw_text) // 4
+                else:
+                    raw_text = completion["choices"][0]["text"]
+                    tokens_used = completion.get("usage", {}).get("total_tokens", len(raw_text) // 4)
 
             # Route raw LLM output through markdown-stripping regex
             extracted = extract_html(raw_text)
