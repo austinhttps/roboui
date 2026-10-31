@@ -24,6 +24,7 @@ class RoboUIConfig:
     max_context_tokens: int = 2048
     n_gpu_layers: int = 0
     model_path: str = "models/gemma-2b-instruct-q4.gguf"
+    mmproj_path: Optional[str] = None
     inlined_tailwind: bool = True
     enforce_csp: bool = True
     api_key: Optional[str] = None
@@ -34,13 +35,21 @@ class RoboUIConfig:
         """Instantiate configuration parsed from environment variables."""
         mock_mode = _parse_bool(os.getenv("ROBOUI_MOCK_MODE"), default=True)
 
-        max_ctx_str = os.getenv("ROBOUI_MAX_CONTEXT_TOKENS", "2048").strip()
-        max_context_tokens = int(max_ctx_str)
+        # Context window throttling (support ROBOUI_N_CTX and ROBOUI_MAX_CONTEXT_TOKENS)
+        max_ctx_val = os.getenv("ROBOUI_N_CTX") or os.getenv("ROBOUI_MAX_CONTEXT_TOKENS", "2048")
+        max_context_tokens = int(max_ctx_val.strip())
 
-        gpu_layers_str = os.getenv("ROBOUI_N_GPU_LAYERS", "0").strip()
-        n_gpu_layers = int(gpu_layers_str)
+        # GPU layers
+        gpu_layers_val = os.getenv("ROBOUI_N_GPU_LAYERS", "0").strip()
+        n_gpu_layers = int(gpu_layers_val)
 
-        model_path = os.getenv("ROBOUI_MODEL_PATH", "models/gemma-2b-instruct-q4.gguf").strip()
+        # BYOM: Model path (support ROBOUI_GGUF_PATH and ROBOUI_MODEL_PATH)
+        model_path = (os.getenv("ROBOUI_GGUF_PATH") or os.getenv("ROBOUI_MODEL_PATH", "models/gemma-2b-instruct-q4.gguf")).strip()
+
+        # Multimodal vision projector path
+        mmproj_env = os.getenv("ROBOUI_MMPROJ_PATH")
+        mmproj_path = mmproj_env.strip() if mmproj_env else None
+
         inlined_tailwind = _parse_bool(os.getenv("ROBOUI_INLINED_TAILWIND"), default=True)
         enforce_csp = _parse_bool(os.getenv("ROBOUI_ENFORCE_CSP"), default=True)
 
@@ -52,6 +61,7 @@ class RoboUIConfig:
             max_context_tokens=max_context_tokens,
             n_gpu_layers=n_gpu_layers,
             model_path=model_path,
+            mmproj_path=mmproj_path,
             inlined_tailwind=inlined_tailwind,
             enforce_csp=enforce_csp,
             api_key=api_key,
