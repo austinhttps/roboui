@@ -43,3 +43,9 @@ def test_app_ui_mock_toggle_generation_flow():
     
     # Verify expandable area exists
     assert len(at.expander) > 0
+
+    # Verify download buttons exist (standalone HTML + zip workspace)
+    assert len(at.download_button) >= 2
+    zip_btn = next((b for b in at.download_button if "Workspace" in b.label), None)
+    assert zip_btn is not None
+

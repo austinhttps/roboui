@@ -16,10 +16,12 @@ try:
     from config import RoboUIConfig
     from engine import get_engine, GenerationResult, ModelFileNotFoundError, OutOfMemoryInferenceError
     from extractor import wrap_in_airgap_sandbox
+    from exporter import ZipExportService
 except ImportError:
     from roboui.config import RoboUIConfig
     from roboui.engine import get_engine, GenerationResult, ModelFileNotFoundError, OutOfMemoryInferenceError
     from roboui.extractor import wrap_in_airgap_sandbox
+    from roboui.exporter import ZipExportService
 
 
 def validate_uploaded_image(file_bytes: bytes) -> Tuple[bool, Optional[str]]:
@@ -216,13 +218,24 @@ def main():
                     help="Clean code extracted from markdown code fences.",
                 )
 
-            st.download_button(
-                label="💾 Download Standalone HTML App",
-                data=result.html_code,
-                file_name="roboui-generated-app.html",
-                mime="text/html",
-                use_container_width=True,
-            )
+            download_col1, download_col2 = st.columns([1, 1], gap="small")
+            with download_col1:
+                st.download_button(
+                    label="💾 Download HTML App",
+                    data=result.html_code,
+                    file_name="roboui-generated-app.html",
+                    mime="text/html",
+                    use_container_width=True,
+                )
+            with download_col2:
+                zip_archive_bytes = ZipExportService.export_to_zip(result.html_code)
+                st.download_button(
+                    label="📦 Download Workspace (.zip)",
+                    data=zip_archive_bytes,
+                    file_name="roboui-workspace.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                )
 
             # Metadata & PII summary
             with st.expander("Security & Performance Audit", expanded=False):
@@ -232,11 +245,46 @@ def main():
                 if result.redacted_pii:
                     st.warning(f"Redacted elements: {', '.join(result.redacted_pii)}")
 
-        # Right Column: Live Website Preview via streamlit.components.v1.html
+        # Right Column: Live Website Preview via streamlit.components.v1.html and Refinement Chat
         with preview_col:
             st.subheader("🌐 Live Website Preview")
             sandboxed_html = build_iframe_html(result.html_code)
             st.components.v1.html(sandboxed_html, height=520, scrolling=True)
+
+            # Iterative Prompting beneath Live Preview
+            st.markdown("### 💬 Iterative Refinement")
+            refine_input = st.chat_input("Refine this UI (e.g., 'Make the navigation bar dark mode')")
+            if refine_input:
+                refine_placeholder = st.empty()
+                refine_status = st.status(f"⚡ Refining UI: '{refine_input}'...", expanded=True)
+                refined_tokens: list[str] = []
+
+                def on_refine_token(token_str: str):
+                    refined_tokens.append(token_str)
+                    if len(refined_tokens) % 8 == 0:
+                        refine_placeholder.code("".join(refined_tokens[-300:]), language="html")
+
+                try:
+                    refine_status.write("Preserving structural layout & applying design edits...")
+                    engine = get_engine(config, fallback_to_mock=False)
+                    refined_result = engine.refine_ui(
+                        existing_code=result.html_code,
+                        refinement_instruction=refine_input,
+                        on_token=on_refine_token,
+                    )
+                    st.session_state["generation_result"] = refined_result
+                    refine_status.update(label="Refinement Complete!", state="complete", expanded=False)
+                    refine_placeholder.empty()
+                    st.rerun()
+                except (OutOfMemoryInferenceError, MemoryError) as oom_exc:
+                    refine_status.update(label="Out of Memory", state="error", expanded=True)
+                    refine_placeholder.empty()
+                    st.error(f"⚠️ GPU / VRAM Out Of Memory during refinement: {oom_exc}")
+                except Exception as exc:
+                    refine_status.update(label="Refinement Failed", state="error", expanded=True)
+                    refine_placeholder.empty()
+                    st.error(f"❌ Refinement Failure: {exc}")
+
 
 
 if __name__ == "__main__":
