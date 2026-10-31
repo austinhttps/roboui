@@ -1,0 +1,60 @@
+# Git Worktrees
+.worktrees
+.worktrees/
+worktrees
+worktrees/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables & secrets
+.env
+.env.local
+
+# Unit test & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local model weights & large binary files
+models/*.gguf
+models/*.bin
+*.gguf
+*.bin
+*.pt
+*.safetensors
+*.onnx
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
