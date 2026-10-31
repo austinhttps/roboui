@@ -15,7 +15,9 @@ def test_app_ui_initialization():
 def test_app_ui_missing_model_error_surfaced():
     at = AppTest.from_file(APP_PATH)
     at.run()
-    # Click generate without local weights
+    # Explicitly set model path to a non-existent path
+    at.sidebar.text_input[0].set_value("nonexistent_model.gguf").run()
+    # Click generate with non-existent local weights
     at.button[0].click().run()
     assert not at.exception
     # Assert that st.error surfaced the missing model error

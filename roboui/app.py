@@ -79,16 +79,18 @@ def main():
         help="Number of layers to offload to GPU VRAM via llama.cpp (0 for CPU only).",
     )
 
+    default_config = RoboUIConfig.from_env()
+
     model_path = st.sidebar.text_input(
         "BYOM Model Path (.gguf)",
-        value="models/gemma-2b-instruct-q4.gguf",
+        value=default_config.model_path,
         help="Path to local quantized GGUF weights.",
     )
 
     mmproj_path = st.sidebar.text_input(
         "Vision Projector (.gguf)",
-        value="",
-        help="Optional path to multimodal CLIP/SigLIP projector.",
+        value=default_config.mmproj_path or "",
+        help="Path to multimodal CLIP/SigLIP vision projector.",
     )
 
     st.sidebar.markdown("---")

@@ -242,12 +242,14 @@ class GemmaVisionService(BaseInferenceEngine):
 
         try:
             system_prompt = (
-                "You are an expert frontend engineer. Transform the attached hand-drawn UI sketch "
-                "into a clean, responsive single-page web application. "
-                "Use clean semantic HTML5, modern Tailwind CSS utility classes, and vanilla JavaScript. "
-                "Output strictly standalone HTML code inside a ```html ... ``` block with no extra explanation."
+                "You are an expert frontend developer. Your task is to output strictly valid HTML, "
+                "Tailwind CSS, and vanilla JavaScript. Never output conversational filler, markdown "
+                "formatting tags, or explanations. Only output code."
             )
-            sanitized_notes, redacted_pii = sanitize_pii(custom_notes or "Clean responsive layout")
+            human_text = "Translate this hand-drawn UI sketch into a responsive website using Tailwind CSS."
+            if custom_notes:
+                human_text += f" Notes: {custom_notes}"
+            sanitized_human_text, redacted_pii = sanitize_pii(human_text)
 
             # Multimodal payload formatting if image is provided
             if image_bytes and hasattr(self.model, "create_chat_completion"):
@@ -261,7 +263,7 @@ class GemmaVisionService(BaseInferenceEngine):
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Design notes and specifications: {sanitized_notes}"},
+                            {"type": "text", "text": sanitized_human_text},
                             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64_img}"}},
                         ],
                     },
@@ -274,7 +276,7 @@ class GemmaVisionService(BaseInferenceEngine):
                 tokens_used = output.get("usage", {}).get("total_tokens", len(raw_text) // 4)
             else:
                 # Text-prompt fallback
-                prompt = f"{system_prompt}\n\nDesign notes: {sanitized_notes}"
+                prompt = f"{system_prompt}\n\nHuman: {sanitized_human_text}"
                 output = self.model(
                     prompt,
                     max_tokens=self.config.max_context_tokens,
@@ -290,7 +292,7 @@ class GemmaVisionService(BaseInferenceEngine):
 
             return GenerationResult(
                 html_code=final_html,
-                semantic_description=sanitized_notes,
+                semantic_description=sanitized_human_text,
                 redacted_pii=redacted_pii,
                 tokens_used=tokens_used,
                 latency_ms=elapsed_ms,

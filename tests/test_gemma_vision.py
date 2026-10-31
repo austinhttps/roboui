@@ -7,7 +7,9 @@ from roboui.engine import (
 )
 
 def test_gemma_vision_service_env_parsing(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL_PATH", "models/custom-gemma-byom.gguf")
     monkeypatch.setenv("ROBOUI_GGUF_PATH", "models/custom-gemma-byom.gguf")
+    monkeypatch.setenv("VISION_PROJECTOR_PATH", "models/custom-mmproj.gguf")
     monkeypatch.setenv("ROBOUI_MMPROJ_PATH", "models/custom-mmproj.gguf")
     monkeypatch.setenv("ROBOUI_N_CTX", "1024")
     monkeypatch.setenv("ROBOUI_N_GPU_LAYERS", "16")

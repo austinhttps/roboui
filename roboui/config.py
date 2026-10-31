@@ -23,8 +23,8 @@ class RoboUIConfig:
     mock_mode: bool = True
     max_context_tokens: int = 2048
     n_gpu_layers: int = 0
-    model_path: str = "models/gemma-2b-instruct-q4.gguf"
-    mmproj_path: Optional[str] = None
+    model_path: str = r"C:\Users\Austi\gemma-4-E2B-it-UD-Q2_K_XL.gguf"
+    mmproj_path: Optional[str] = r"C:\Users\Austi\mmproj-F16.gguf"
     inlined_tailwind: bool = True
     enforce_csp: bool = True
     api_key: Optional[str] = None
@@ -43,11 +43,20 @@ class RoboUIConfig:
         gpu_layers_val = os.getenv("ROBOUI_N_GPU_LAYERS", "0").strip()
         n_gpu_layers = int(gpu_layers_val)
 
-        # BYOM: Model path (support ROBOUI_GGUF_PATH and ROBOUI_MODEL_PATH)
-        model_path = (os.getenv("ROBOUI_GGUF_PATH") or os.getenv("ROBOUI_MODEL_PATH", "models/gemma-2b-instruct-q4.gguf")).strip()
+        # Model path: explicitly check LLM_MODEL_PATH, ROBOUI_GGUF_PATH, and ROBOUI_MODEL_PATH
+        model_path = (
+            os.getenv("LLM_MODEL_PATH")
+            or os.getenv("ROBOUI_GGUF_PATH")
+            or os.getenv("ROBOUI_MODEL_PATH")
+            or r"C:\Users\Austi\gemma-4-E2B-it-UD-Q2_K_XL.gguf"
+        ).strip()
 
-        # Multimodal vision projector path
-        mmproj_env = os.getenv("ROBOUI_MMPROJ_PATH")
+        # Multimodal vision projector path: explicitly check VISION_PROJECTOR_PATH, ROBOUI_MMPROJ_PATH
+        mmproj_env = (
+            os.getenv("VISION_PROJECTOR_PATH")
+            or os.getenv("ROBOUI_MMPROJ_PATH")
+            or r"C:\Users\Austi\mmproj-F16.gguf"
+        )
         mmproj_path = mmproj_env.strip() if mmproj_env else None
 
         inlined_tailwind = _parse_bool(os.getenv("ROBOUI_INLINED_TAILWIND"), default=True)
