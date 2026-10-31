@@ -1,17 +1,18 @@
-"""Streamlit application for RoboUI: On-Device Image-to-Code Web Generator."""
+"""Streamlit application for RoboUI: Local Vision Inference & Streamlit UI Integration."""
 
 import io
+from pathlib import Path
 from typing import Optional, Tuple
 from PIL import Image
 import streamlit as st
 
 from roboui.config import RoboUIConfig
-from roboui.engine import get_engine, GenerationResult, ModelFileNotFoundError
+from roboui.engine import get_engine, GenerationResult, ModelFileNotFoundError, OutOfMemoryInferenceError
 from roboui.extractor import wrap_in_airgap_sandbox
 
 
 def validate_uploaded_image(file_bytes: bytes) -> Tuple[bool, Optional[str]]:
-    """Validate that uploaded bytes represent a valid image file."""
+    """Validate that uploaded bytes represent a valid PNG or JPEG image file."""
     if not file_bytes:
         return False, "Empty file received."
     try:
@@ -29,7 +30,7 @@ def build_iframe_html(html_content: str) -> str:
 
 def main():
     st.set_page_config(
-        page_title="RoboUI: On-Device Image-to-Code Generator",
+        page_title="RoboUI: Local Vision Sketch-to-Code",
         page_icon="⚡",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -41,131 +42,152 @@ def main():
     if "uploaded_image_bytes" not in st.session_state:
         st.session_state["uploaded_image_bytes"] = None
 
-    # Sidebar: Model and Hardware Configuration
-    st.sidebar.title("⚙️ Engine & Hardware")
-    mock_mode = st.sidebar.toggle("Enable Mock Mode (Zero-Weight)", value=True, help="Run without downloading multi-gigabyte GGUF model files.")
-    
+    # Sidebar: Model and Hardware Configuration (BYOM & VRAM limits)
+    st.sidebar.title("⚙️ Local Vision Hardware")
+    mock_mode = st.sidebar.toggle(
+        "Enable Mock Mode",
+        value=True,
+        help="Use deterministic mock service for rapid development without weights.",
+    )
+
     max_context = st.sidebar.slider(
-        "Context Window Throttling (tokens)",
+        "Context Window Throttling (n_ctx)",
         min_value=512,
         max_value=8192,
         value=2048,
         step=256,
-        help="Throttles maximum context window to prevent VRAM allocation crashes.",
+        help="Strict upper bound on context tokens to prevent VRAM exhaustion.",
     )
-    
+
     n_gpu_layers = st.sidebar.slider(
-        "GPU Layers (VRAM Offload)",
+        "GPU Offload Layers (n_gpu_layers)",
         min_value=0,
         max_value=64,
         value=0,
         step=1,
-        help="0 uses CPU only; >0 offloads layers to local GPU via llama.cpp.",
+        help="Number of layers to offload to GPU VRAM via llama.cpp (0 for CPU only).",
     )
 
-    model_path = st.sidebar.text_input("Local Model Path", value="models/gemma-2b-instruct-q4.gguf")
+    model_path = st.sidebar.text_input(
+        "BYOM Model Path (.gguf)",
+        value="models/gemma-2b-instruct-q4.gguf",
+        help="Path to local quantized GGUF weights.",
+    )
+
+    mmproj_path = st.sidebar.text_input(
+        "Vision Projector (.gguf)",
+        value="",
+        help="Optional path to multimodal CLIP/SigLIP projector.",
+    )
 
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🛡️ Privacy & Sandboxing")
-    st.sidebar.caption("✅ **Process Network Isolation:** Outbound traffic blocked")
-    st.sidebar.caption("✅ **Air-Gapped CSP:** `default-src 'none'` enforced")
-    st.sidebar.caption("✅ **PII Scrubbing:** Active on intermediate representations")
-    st.sidebar.caption("✅ **Tailwind CSS:** Inlined offline without external CDNs")
+    st.sidebar.caption("🛡️ **Air-Gapped Sandbox:** Active (`default-src 'none'`)")
+    st.sidebar.caption("🔒 **PII Scrubbing:** Active on intermediate text streams")
+    st.sidebar.caption("🎨 **Tailwind CSS:** Inlined offline without external CDNs")
 
-    # App Header
-    st.title("⚡ RoboUI: On-Device Sketch-to-Code Generator")
+    # Header
+    st.title("⚡ RoboUI: Local Vision Image-to-Code Web Generator")
     st.markdown(
-        "Convert hand-drawn interface sketches and wireframes into clean, air-gapped "
-        "HTML/Tailwind web applications using local models and LangChain."
+        "Upload a hand-drawn UI sketch (.png, .jpg) to generate clean HTML/Tailwind/JS code "
+        "using local Gemma multimodal vision and LangChain."
     )
+
+    # Top Section: File Uploader and Prompts
+    upload_col, prompt_col = st.columns([1, 1], gap="medium")
+
+    with upload_col:
+        uploaded_file = st.file_uploader(
+            "Upload UI Sketch (.png, .jpg)",
+            type=["png", "jpg", "jpeg"],
+            help="Upload your hand-drawn wireframe or UI design sketch.",
+        )
+
+        image_bytes = None
+        if uploaded_file is not None:
+            raw_bytes = uploaded_file.read()
+            is_valid, err_msg = validate_uploaded_image(raw_bytes)
+            if is_valid:
+                image_bytes = raw_bytes
+                st.session_state["uploaded_image_bytes"] = image_bytes
+                st.image(image_bytes, caption="Uploaded Wireframe Sketch", use_container_width=True)
+            else:
+                st.error(err_msg)
+
+    with prompt_col:
+        custom_notes = st.text_area(
+            "Design Specifications & Notes",
+            value="Build a responsive SaaS dashboard with dark theme and interactive analytics card.",
+            height=120,
+            help="Additional hints for layout, color themes, or components. Tested for PII scrubbing.",
+        )
+
+        generate_clicked = st.button("🚀 Synthesize Web Application", type="primary", use_container_width=True)
 
     config = RoboUIConfig(
         mock_mode=mock_mode,
         max_context_tokens=max_context,
         n_gpu_layers=n_gpu_layers,
         model_path=model_path,
+        mmproj_path=mmproj_path.strip() if mmproj_path.strip() else None,
         inlined_tailwind=True,
         enforce_csp=True,
     )
 
-    col1, col2 = st.columns([1, 1], gap="large")
+    # Trigger Generation with Progress Spinner
+    if generate_clicked:
+        with st.spinner("Analyzing sketch with Gemma vision and synthesizing code..."):
+            try:
+                engine = get_engine(config, fallback_to_mock=True)
+                active_image = image_bytes or st.session_state.get("uploaded_image_bytes")
+                result = engine.generate_ui(image_bytes=active_image, custom_notes=custom_notes)
+                st.session_state["generation_result"] = result
+                st.success("Web UI generated successfully!")
+            except ModelFileNotFoundError as exc:
+                st.error(f"Model Configuration Error: {exc}")
+            except OutOfMemoryInferenceError as oom_exc:
+                st.error(f"VRAM / Memory Exhaustion: {oom_exc}")
+            except Exception as exc:
+                st.error(f"Inference Failure: {exc}")
 
-    with col1:
-        st.subheader("1. Upload Sketch & Style Notes")
-        uploaded_file = st.file_uploader("Upload wireframe drawing or sketch", type=["png", "jpg", "jpeg"])
-        
-        image_bytes = None
-        if uploaded_file is not None:
-            image_bytes = uploaded_file.read()
-            is_valid, err_msg = validate_uploaded_image(image_bytes)
-            if not is_valid:
-                st.error(err_msg)
-                image_bytes = None
-            else:
-                st.image(image_bytes, caption="Uploaded UI Sketch", use_container_width=True)
-                st.session_state["uploaded_image_bytes"] = image_bytes
-        
-        custom_notes = st.text_area(
-            "Design Specifications & Notes",
-            value="Build a responsive SaaS dashboard with dark theme and interactive analytics card.",
-            height=100,
-            help="Additional hints for layout, color themes, or components. Tested for PII scrubbing.",
-        )
+    # Output Section: Two-Column Layout (Code on left, Live Preview on right)
+    result: Optional[GenerationResult] = st.session_state.get("generation_result")
 
-        generate_clicked = st.button("🚀 Generate Air-Gapped Web UI", type="primary", use_container_width=True)
+    if result:
+        st.markdown("---")
+        code_col, preview_col = st.columns([1, 1], gap="large")
 
-        if generate_clicked:
-            with st.spinner("Synthesizing UI with on-device pipeline..."):
-                try:
-                    engine = get_engine(config)
-                    result = engine.generate_ui(image_bytes=image_bytes, custom_notes=custom_notes)
-                    st.session_state["generation_result"] = result
-                    st.success("Web application generated successfully!")
-                except ModelFileNotFoundError as exc:
-                    st.error(f"Model Error: {exc}")
-                except Exception as exc:
-                    st.error(f"Inference Failure: {exc}")
-
-    with col2:
-        st.subheader("2. Generated Output & Sandbox")
-        result: Optional[GenerationResult] = st.session_state.get("generation_result")
-
-        if result:
-            tab_preview, tab_code, tab_audit = st.tabs([
-                "🌐 Live Air-Gapped Preview",
-                "📄 HTML / CSS Source",
-                "🔍 Security & Audit",
-            ])
-
-            with tab_preview:
-                sandboxed_html = build_iframe_html(result.html_code)
-                st.components.v1.html(sandboxed_html, height=520, scrolling=True)
-                st.download_button(
-                    label="💾 Download Standalone HTML App",
-                    data=result.html_code,
-                    file_name="roboui-generated-app.html",
-                    mime="text/html",
-                    use_container_width=True,
+        # Left Column: Raw Extracted Code in Expandable Text Area
+        with code_col:
+            st.subheader("📄 Extracted Code")
+            with st.expander("Expand Raw Extracted Code", expanded=True):
+                st.text_area(
+                    label="HTML / Tailwind / Vanilla JavaScript",
+                    value=result.html_code,
+                    height=460,
+                    help="Clean code extracted from markdown code fences.",
                 )
 
-            with tab_code:
-                st.code(result.html_code, language="html")
+            st.download_button(
+                label="💾 Download Standalone HTML App",
+                data=result.html_code,
+                file_name="roboui-generated-app.html",
+                mime="text/html",
+                use_container_width=True,
+            )
 
-            with tab_audit:
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Latency", f"{result.latency_ms:.1f} ms")
-                m2.metric("Tokens Synthesized", result.tokens_used)
-                m3.metric("PII Scrubbed", result.sanitized_pii_count)
-
-                st.markdown("#### Intermediate Semantic Representation")
-                st.info(result.semantic_description)
-
+            # Metadata & PII summary
+            with st.expander("Security & Performance Audit", expanded=False):
+                st.caption(f"**Tokens Synthesized:** {result.tokens_used}")
+                st.caption(f"**Latency:** {result.latency_ms:.1f} ms")
+                st.caption(f"**PII Scrubbed:** {result.sanitized_pii_count} items")
                 if result.redacted_pii:
-                    st.warning(f"Redacted sensitive items: {', '.join(result.redacted_pii)}")
-                else:
-                    st.success("No sensitive PII patterns detected in prompt or layout.")
-        else:
-            st.info("Upload a sketch or click **Generate Air-Gapped Web UI** to view live results.")
+                    st.warning(f"Redacted elements: {', '.join(result.redacted_pii)}")
+
+        # Right Column: Live Website Preview via streamlit.components.v1.html
+        with preview_col:
+            st.subheader("🌐 Live Website Preview")
+            sandboxed_html = build_iframe_html(result.html_code)
+            st.components.v1.html(sandboxed_html, height=520, scrolling=True)
 
 
 if __name__ == "__main__":
