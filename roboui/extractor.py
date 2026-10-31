@@ -62,7 +62,6 @@ def extract_html(llm_output: str) -> str:
     tag_match = HTML_TAG_PATTERN.search(text)
     if tag_match:
         extracted = tag_match.group(1).strip()
-        # Find last closing tag or last >
         last_gt = extracted.rfind(">")
         if last_gt != -1:
             extracted = extracted[:last_gt + 1]
@@ -72,15 +71,22 @@ def extract_html(llm_output: str) -> str:
 
 
 def wrap_in_airgap_sandbox(html_content: str, inline_css: str | None = None) -> str:
-    """Wrap HTML in an air-gapped container with strict CSP and inlined CSS."""
+    """Wrap HTML in an air-gapped container with strict CSP and inlined CSS.
+    
+    Idempotent: if CSP is already injected, returns the existing HTML.
+    """
+    clean_html = html_content.strip()
+
+    # Idempotency check: don't double inject CSP or styles
+    if 'http-equiv="Content-Security-Policy"' in clean_html:
+        return clean_html
+
     css_payload = inline_css if inline_css is not None else load_offline_css()
     csp_meta = (
         '<meta http-equiv="Content-Security-Policy" '
         'content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; img-src \'self\' data:;">'
     )
     style_block = f"<style>{css_payload}</style>" if css_payload else ""
-
-    clean_html = html_content.strip()
 
     # If already a full document, inject into <head>
     if "<head>" in clean_html.lower():
