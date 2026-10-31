@@ -48,7 +48,9 @@ User Style Preferences:
 Provide the complete webpage inside a ```html ... ``` code block.
 """
 
-REFINEMENT_PROMPT_TEXT = """You are an expert frontend engineer updating an existing web application.
+REFINEMENT_PROMPT_TEXT = """You are an expert frontend developer with a strict eye for 1:1 design translation.
+Analyze the relative widths, heights, alignment, and spatial positioning of every element.
+You must use Tailwind CSS grid, flexbox, and relative fractional width classes (e.g., `w-1/2`, `w-1/3`, `max-w-md`) to ensure perfect 1:1 design translation.
 Carefully apply the refinement instruction while preserving the overall layout, existing components, and Tailwind styling.
 
 Existing Code Context:
@@ -59,7 +61,7 @@ Existing Code Context:
 Refinement Instruction:
 {refinement_instruction}
 
-Output the complete, updated HTML file inside a single ```html ... ``` code block. Output only code.
+Output strictly valid HTML, Tailwind CSS, and vanilla JavaScript inside a single ```html ... ``` code block. Never output conversational filler or explanations. Only output code.
 """
 
 

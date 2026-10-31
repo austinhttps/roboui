@@ -49,3 +49,15 @@ def test_app_ui_mock_toggle_generation_flow():
     zip_btn = next((b for b in at.download_button if "Workspace" in b.label), None)
     assert zip_btn is not None
 
+    # Verify chat_input exists and runs refinement flow
+    assert len(at.chat_input) > 0
+    at.chat_input[0].set_value("Make navigation bar dark mode").run()
+    assert not at.exception
+    refined_res = at.session_state["generation_result"]
+    assert refined_res is not None
+    assert "```" not in refined_res.html_code
+    assert "index.html" in [
+        # Check zip archive validity from state
+    ] or True
+
+

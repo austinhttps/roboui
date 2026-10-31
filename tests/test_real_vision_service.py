@@ -77,3 +77,43 @@ def test_gemma_vision_service_raises_oom_without_mock_fallback():
     with pytest.raises(OutOfMemoryInferenceError) as exc_info:
         service.generate_ui(image_bytes=fake_png, custom_notes="Big model")
     assert "VRAM/RAM exhaustion" in str(exc_info.value)
+
+
+def test_gemma_vision_service_refine_ui_retains_strict_spatial_prompt():
+    config = RoboUIConfig(mock_mode=False, model_path="models/dummy.gguf")
+    service = GemmaVisionService.__new__(GemmaVisionService)
+    service.config = config
+    service.fallback_to_mock = False
+    service.is_degraded = False
+    service._mock_delegate = None
+
+    mock_model = MagicMock()
+    mock_model.create_chat_completion.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": "```html\n<div class='w-1/2 mx-auto'><button>Dark Button</button></div>\n```"
+                }
+            }
+        ],
+        "usage": {"total_tokens": 120},
+    }
+    service.model = mock_model
+
+    existing = "<div class='w-1/2 mx-auto'><button>Light Button</button></div>"
+    result = service.refine_ui(existing_code=existing, refinement_instruction="Make button dark mode")
+
+    assert mock_model.create_chat_completion.called
+    call_args = mock_model.create_chat_completion.call_args[1]
+    messages = call_args["messages"]
+
+    system_msg = next(m for m in messages if m["role"] == "system")
+    assert "strict eye for 1:1 design translation" in system_msg["content"]
+    assert "Analyze the relative widths, heights, alignment, and spatial positioning" in system_msg["content"]
+    assert "Tailwind CSS grid, flexbox, and relative fractional width classes" in system_msg["content"]
+    assert "w-1/2" in system_msg["content"]
+
+    # Verify extracted code is clean HTML without ``` markdown tags
+    assert "```" not in result.html_code
+    assert "Dark Button" in result.html_code
+

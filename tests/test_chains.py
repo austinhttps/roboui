@@ -36,6 +36,10 @@ def test_refinement_pipeline_with_memory():
 
     refine_tmpl = get_refinement_prompt_template()
     assert set(refine_tmpl.input_variables) == {"existing_code", "refinement_instruction"}
+    template_str = refine_tmpl.template
+    assert "Analyze the relative widths, heights, alignment, and spatial positioning" in template_str
+    assert "Tailwind CSS grid, flexbox, and relative fractional width classes" in template_str
+    assert "1:1 design translation" in template_str
 
     codegen_mock = FakeListLLM(responses=["```html\n<nav class='bg-black'>Dark Logo</nav>\n```"])
     refine_pipeline = build_refinement_pipeline(codegen_llm=codegen_mock)
@@ -46,4 +50,5 @@ def test_refinement_pipeline_with_memory():
     assert "raw_code" in output
     assert "clean_html" in output
     assert "bg-black" in output["clean_html"]
+
 

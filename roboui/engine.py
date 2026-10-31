@@ -442,6 +442,9 @@ class GemmaVisionService(BaseInferenceEngine):
         try:
             system_prompt = (
                 "You are an expert frontend developer with a strict eye for 1:1 design translation. "
+                "Analyze the relative widths, heights, alignment, and spatial positioning of every element. "
+                "You must use Tailwind CSS grid, flexbox, and relative fractional width classes "
+                "(e.g., `w-1/2`, `w-1/3`, `max-w-md`) to ensure perfect 1:1 design translation. "
                 "Update the existing web application code based strictly on the user's refinement instructions. "
                 "Preserve all existing components, responsive grid/flexbox layouts, and Tailwind classes unless explicitly told to modify them. "
                 "Output strictly valid HTML, Tailwind CSS, and vanilla JavaScript. "
