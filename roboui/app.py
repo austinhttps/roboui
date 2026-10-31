@@ -56,9 +56,9 @@ def main():
     # Sidebar: Model and Hardware Configuration (BYOM & VRAM limits)
     st.sidebar.title("⚙️ Local Vision Hardware")
     mock_mode = st.sidebar.toggle(
-        "Enable Mock Mode",
-        value=True,
-        help="Use deterministic mock service for rapid development without weights.",
+        "Enable Mock Mode (Testing Only)",
+        value=False,
+        help="Run without local GGUF weights for dry testing.",
     )
 
     max_context = st.sidebar.slider(
@@ -144,21 +144,23 @@ def main():
         enforce_csp=True,
     )
 
-    # Trigger Generation with Progress Spinner
+    # Trigger Real Generation with Progress Spinner and Error Boundaries
     if generate_clicked:
         with st.spinner("Analyzing sketch with Gemma vision and synthesizing code..."):
             try:
-                engine = get_engine(config, fallback_to_mock=True)
+                engine = get_engine(config, fallback_to_mock=False)
                 active_image = image_bytes or st.session_state.get("uploaded_image_bytes")
                 result = engine.generate_ui(image_bytes=active_image, custom_notes=custom_notes)
                 st.session_state["generation_result"] = result
                 st.success("Web UI generated successfully!")
             except ModelFileNotFoundError as exc:
-                st.error(f"Model Configuration Error: {exc}")
-            except OutOfMemoryInferenceError as oom_exc:
-                st.error(f"VRAM / Memory Exhaustion: {oom_exc}")
+                st.error(f"❌ Local GGUF Model File Not Found: {exc}")
+                st.info("💡 To run on-device inference, place your .gguf model weights in the models/ directory or specify the exact path in the sidebar. You can also toggle 'Enable Mock Mode (Testing Only)' in the sidebar for offline testing.")
+            except (OutOfMemoryInferenceError, MemoryError) as oom_exc:
+                st.error(f"⚠️ GPU / VRAM Out Of Memory: {oom_exc}")
+                st.info("💡 Try reducing Context Window Throttling (n_ctx) or reducing GPU Offload Layers (n_gpu_layers) in the sidebar.")
             except Exception as exc:
-                st.error(f"Inference Failure: {exc}")
+                st.error(f"❌ Inference Failure: {exc}")
 
     # Output Section: Two-Column Layout (Code on left, Live Preview on right)
     result: Optional[GenerationResult] = st.session_state.get("generation_result")

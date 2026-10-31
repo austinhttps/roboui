@@ -12,9 +12,23 @@ def test_app_ui_initialization():
     # Check that generate button exists
     assert len(at.button) > 0
 
-def test_app_ui_generation_flow():
+def test_app_ui_missing_model_error_surfaced():
     at = AppTest.from_file(APP_PATH)
     at.run()
+    # Click generate without local weights
+    at.button[0].click().run()
+    assert not at.exception
+    # Assert that st.error surfaced the missing model error
+    assert len(at.error) > 0
+    assert "Local GGUF Model File Not Found" in at.error[0].value
+
+def test_app_ui_mock_toggle_generation_flow():
+    at = AppTest.from_file(APP_PATH)
+    at.run()
+    
+    # Toggle Mock Mode on in sidebar
+    at.sidebar.toggle[0].set_value(True).run()
+    assert at.sidebar.toggle[0].value is True
     
     # Click the generate button
     at.button[0].click().run()
@@ -25,5 +39,5 @@ def test_app_ui_generation_flow():
     result = at.session_state["generation_result"]
     assert "<!DOCTYPE html>" in result.html_code
     
-    # Verify expandable area and text area / code representation exists
+    # Verify expandable area exists
     assert len(at.expander) > 0

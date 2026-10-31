@@ -241,23 +241,30 @@ class GemmaVisionService(BaseInferenceEngine):
         start_time = time.perf_counter()
 
         try:
-            prompt = (
+            system_prompt = (
                 "You are an expert frontend engineer. Transform the attached hand-drawn UI sketch "
-                f"into a clean, responsive single-page web app. Style notes: {custom_notes or 'clean Tailwind dark theme'}."
+                "into a clean, responsive single-page web application. "
+                "Use clean semantic HTML5, modern Tailwind CSS utility classes, and vanilla JavaScript. "
+                "Output strictly standalone HTML code inside a ```html ... ``` block with no extra explanation."
             )
-            sanitized_prompt, redacted_pii = sanitize_pii(prompt)
+            sanitized_notes, redacted_pii = sanitize_pii(custom_notes or "Clean responsive layout")
 
             # Multimodal payload formatting if image is provided
             if image_bytes and hasattr(self.model, "create_chat_completion"):
+                mime = "image/jpeg" if (image_bytes.startswith(b"\xff\xd8") or b"JFIF" in image_bytes[:32]) else "image/png"
                 b64_img = base64.b64encode(image_bytes).decode("utf-8")
                 messages = [
                     {
+                        "role": "system",
+                        "content": system_prompt,
+                    },
+                    {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": sanitized_prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_img}"}},
+                            {"type": "text", "text": f"Design notes and specifications: {sanitized_notes}"},
+                            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64_img}"}},
                         ],
-                    }
+                    },
                 ]
                 output = self.model.create_chat_completion(
                     messages=messages,
@@ -267,31 +274,29 @@ class GemmaVisionService(BaseInferenceEngine):
                 tokens_used = output.get("usage", {}).get("total_tokens", len(raw_text) // 4)
             else:
                 # Text-prompt fallback
+                prompt = f"{system_prompt}\n\nDesign notes: {sanitized_notes}"
                 output = self.model(
-                    sanitized_prompt,
+                    prompt,
                     max_tokens=self.config.max_context_tokens,
                     stop=["```\n\n"],
                 )
                 raw_text = output["choices"][0]["text"]
                 tokens_used = output.get("usage", {}).get("total_tokens", len(raw_text) // 4)
 
+            # Route raw LLM output through markdown-stripping regex
             extracted = extract_html(raw_text)
             final_html = wrap_in_airgap_sandbox(extracted) if self.config.enforce_csp else extracted
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
             return GenerationResult(
                 html_code=final_html,
-                semantic_description=sanitized_prompt,
+                semantic_description=sanitized_notes,
                 redacted_pii=redacted_pii,
                 tokens_used=tokens_used,
                 latency_ms=elapsed_ms,
             )
         except (RuntimeError, MemoryError) as mem_err:
             logger.error("Out of Memory error encountered during generation: %s", mem_err)
-            if self.fallback_to_mock:
-                logger.info("Failing over to deterministic MockInferenceEngine after OOM.")
-                fallback = MockInferenceEngine(self.config)
-                return fallback.generate_ui(image_bytes=image_bytes, custom_notes=custom_notes)
             raise OutOfMemoryInferenceError(f"Generation aborted due to VRAM/RAM exhaustion: {mem_err}") from mem_err
 
 
@@ -299,7 +304,7 @@ class GemmaVisionService(BaseInferenceEngine):
 LlamaCppInferenceEngine = GemmaVisionService
 
 
-def get_engine(config: RoboUIConfig, fallback_to_mock: bool = True) -> BaseInferenceEngine:
+def get_engine(config: RoboUIConfig, fallback_to_mock: bool = False) -> BaseInferenceEngine:
     """Factory creating the appropriate inference engine based on configuration."""
     if config.mock_mode:
         return MockInferenceEngine(config)
