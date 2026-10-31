@@ -47,6 +47,10 @@ def test_gemma_vision_service_multimodal_payload_and_regex_extraction():
     system_msg = next(m for m in messages if m["role"] == "system")
     assert "strict eye for 1:1 design translation" in system_msg["content"]
     assert "Tailwind CSS grid, flexbox, and relative fractional width classes" in system_msg["content"]
+    assert "rounded-xl" in system_msg["content"]
+    assert "hover:bg-blue-600" in system_msg["content"]
+    assert "px-6 py-2.5" in system_msg["content"]
+    assert "focus:ring-1 focus:ring-blue-500" in system_msg["content"]
     
     # Verify user message contains base64 image data URI
     user_msg = next(m for m in messages if m["role"] == "user")
@@ -112,6 +116,10 @@ def test_gemma_vision_service_refine_ui_retains_strict_spatial_prompt():
     assert "Analyze the relative widths, heights, alignment, and spatial positioning" in system_msg["content"]
     assert "Tailwind CSS grid, flexbox, and relative fractional width classes" in system_msg["content"]
     assert "w-1/2" in system_msg["content"]
+    assert "rounded-xl" in system_msg["content"]
+    assert "hover:bg-blue-600" in system_msg["content"]
+    assert "px-6 py-2.5" in system_msg["content"]
+    assert "focus:ring-1 focus:ring-blue-500" in system_msg["content"]
 
     # Verify extracted code is clean HTML without ``` markdown tags
     assert "```" not in result.html_code

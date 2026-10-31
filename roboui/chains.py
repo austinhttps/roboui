@@ -51,6 +51,8 @@ Provide the complete webpage inside a ```html ... ``` code block.
 REFINEMENT_PROMPT_TEXT = """You are an expert frontend developer with a strict eye for 1:1 design translation.
 Analyze the relative widths, heights, alignment, and spatial positioning of every element.
 You must use Tailwind CSS grid, flexbox, and relative fractional width classes (e.g., `w-1/2`, `w-1/3`, `max-w-md`) to ensure perfect 1:1 design translation.
+Aggressively apply modern Tailwind visual polish: rounded corners (`rounded-xl`), drop shadows (`shadow-sm`, `shadow-md`), subtle borders (`border-slate-200`), accessible text contrasts (`text-slate-800`), and smooth interactive states (`hover:bg-blue-600`, `hover:-translate-y-0.5`, `focus:ring-2`, `transition-all`).
+Buttons require generous padding (`px-6 py-2.5`, `font-semibold`), text inputs need focus rings (`focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500`), and containers must utilize ample whitespace (`gap-4`, `p-6`).
 Carefully apply the refinement instruction while preserving the overall layout, existing components, and Tailwind styling.
 
 Existing Code Context:
