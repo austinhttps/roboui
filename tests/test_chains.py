@@ -29,3 +29,21 @@ def test_build_roboui_pipeline():
     assert "raw_code" in output
     assert "sanitized_description" in output
     assert "<nav>Logo</nav>" in output["raw_code"]
+
+
+def test_refinement_pipeline_with_memory():
+    from roboui.chains import build_refinement_pipeline, get_refinement_prompt_template
+
+    refine_tmpl = get_refinement_prompt_template()
+    assert set(refine_tmpl.input_variables) == {"existing_code", "refinement_instruction"}
+
+    codegen_mock = FakeListLLM(responses=["```html\n<nav class='bg-black'>Dark Logo</nav>\n```"])
+    refine_pipeline = build_refinement_pipeline(codegen_llm=codegen_mock)
+    output = refine_pipeline.invoke({
+        "existing_code": "<nav class='bg-white'>Logo</nav>",
+        "refinement_instruction": "Make the navigation bar dark mode",
+    })
+    assert "raw_code" in output
+    assert "clean_html" in output
+    assert "bg-black" in output["clean_html"]
+

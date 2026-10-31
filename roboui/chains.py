@@ -48,6 +48,20 @@ User Style Preferences:
 Provide the complete webpage inside a ```html ... ``` code block.
 """
 
+REFINEMENT_PROMPT_TEXT = """You are an expert frontend engineer updating an existing web application.
+Carefully apply the refinement instruction while preserving the overall layout, existing components, and Tailwind styling.
+
+Existing Code Context:
+```html
+{existing_code}
+```
+
+Refinement Instruction:
+{refinement_instruction}
+
+Output the complete, updated HTML file inside a single ```html ... ``` code block. Output only code.
+"""
+
 
 def get_vision_prompt_template() -> PromptTemplate:
     """Return PromptTemplate for vision layout analysis."""
@@ -63,6 +77,15 @@ def get_codegen_prompt_template() -> PromptTemplate:
         template=CODEGEN_PROMPT_TEXT,
         input_variables=["semantic_description", "style_notes"],
     )
+
+
+def get_refinement_prompt_template() -> PromptTemplate:
+    """Return PromptTemplate for iterative code refinement with memory."""
+    return PromptTemplate(
+        template=REFINEMENT_PROMPT_TEXT,
+        input_variables=["existing_code", "refinement_instruction"],
+    )
+
 
 
 def throttle_context(text: str, max_tokens: int) -> str:
@@ -122,6 +145,33 @@ def build_roboui_pipeline(vision_llm: Any, codegen_llm: Any):
         }
 
     return RunnableLambda(_execute_pipeline)
+
+
+def build_refinement_pipeline(codegen_llm: Any):
+    """Build LangChain pipeline for conversational iterative code refinement."""
+    refinement_prompt = get_refinement_prompt_template()
+    str_parser = StrOutputParser()
+    chain = refinement_prompt | codegen_llm | str_parser
+
+    def _execute_refinement(inputs: Dict[str, Any]) -> Dict[str, Any]:
+        existing_code = inputs.get("existing_code", "")
+        instruction = inputs.get("refinement_instruction", "")
+        sanitized_instruction, redacted_pii = sanitize_pii(instruction)
+
+        raw_output = chain.invoke({
+            "existing_code": existing_code,
+            "refinement_instruction": sanitized_instruction,
+        })
+        clean_html = extract_html(raw_output)
+        return {
+            "raw_code": raw_output,
+            "clean_html": clean_html,
+            "redacted_pii": redacted_pii,
+            "instruction": sanitized_instruction,
+        }
+
+    return RunnableLambda(_execute_refinement)
+
 
 
 def execute_langchain_vision_pipeline(

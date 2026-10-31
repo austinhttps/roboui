@@ -15,12 +15,12 @@ from langchain_core.language_models.fake import FakeListLLM
 
 try:
     from config import RoboUIConfig
-    from chains import build_roboui_pipeline, throttle_context
+    from chains import build_roboui_pipeline, build_refinement_pipeline, throttle_context
     from extractor import extract_html, wrap_in_airgap_sandbox
     from sanitizer import sanitize_pii
 except ImportError:
     from roboui.config import RoboUIConfig
-    from roboui.chains import build_roboui_pipeline, throttle_context
+    from roboui.chains import build_roboui_pipeline, build_refinement_pipeline, throttle_context
     from roboui.extractor import extract_html, wrap_in_airgap_sandbox
     from roboui.sanitizer import sanitize_pii
 
@@ -87,6 +87,17 @@ class BaseInferenceEngine(ABC):
     ) -> GenerationResult:
         """Run the end-to-end pipeline: vision analysis, PII scrub, code synthesis, sandbox wrapping."""
         pass
+
+    @abstractmethod
+    def refine_ui(
+        self,
+        existing_code: str,
+        refinement_instruction: str,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> GenerationResult:
+        """Iteratively refine existing UI code based on conversational user instruction."""
+        pass
+
 
 
 class MockInferenceEngine(BaseInferenceEngine):
@@ -191,6 +202,40 @@ class MockInferenceEngine(BaseInferenceEngine):
             tokens_used=tokens_est,
             latency_ms=elapsed_ms,
         )
+
+    def refine_ui(
+        self,
+        existing_code: str,
+        refinement_instruction: str,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> GenerationResult:
+        start_time = time.perf_counter()
+        # Simulated conversational refinement with LangChain
+        sanitized_instruction, redacted_pii = sanitize_pii(refinement_instruction)
+        
+        # Simple simulated modification for mock mode (e.g. inject classes or tweak text)
+        simulated_refined_code = f"```html\n<!-- Refined with: {sanitized_instruction} -->\n{existing_code}\n```"
+        codegen_mock = FakeListLLM(responses=[simulated_refined_code])
+        refine_pipeline = build_refinement_pipeline(codegen_mock)
+        pipeline_output = refine_pipeline.invoke({
+            "existing_code": existing_code,
+            "refinement_instruction": sanitized_instruction,
+        })
+
+        clean_html = pipeline_output["clean_html"]
+        final_html = wrap_in_airgap_sandbox(clean_html) if self.config.enforce_csp else clean_html
+        if on_token:
+            on_token(final_html)
+
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+        return GenerationResult(
+            html_code=final_html,
+            semantic_description=f"Refinement: {sanitized_instruction}",
+            redacted_pii=redacted_pii,
+            tokens_used=len(pipeline_output["raw_code"]) // 4,
+            latency_ms=elapsed_ms,
+        )
+
 
 
 class GemmaVisionService(BaseInferenceEngine):
@@ -377,6 +422,97 @@ class GemmaVisionService(BaseInferenceEngine):
         except (RuntimeError, MemoryError) as mem_err:
             logger.error("Out of Memory error encountered during generation: %s", mem_err)
             raise OutOfMemoryInferenceError(f"Generation aborted due to VRAM/RAM exhaustion: {mem_err}") from mem_err
+
+    def refine_ui(
+        self,
+        existing_code: str,
+        refinement_instruction: str,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> GenerationResult:
+        """Iteratively refine existing UI code based on conversational user instruction."""
+        if self._mock_delegate:
+            return self._mock_delegate.refine_ui(
+                existing_code=existing_code,
+                refinement_instruction=refinement_instruction,
+                on_token=on_token,
+            )
+
+        start_time = time.perf_counter()
+
+        try:
+            system_prompt = (
+                "You are an expert frontend developer with a strict eye for 1:1 design translation. "
+                "Update the existing web application code based strictly on the user's refinement instructions. "
+                "Preserve all existing components, responsive grid/flexbox layouts, and Tailwind classes unless explicitly told to modify them. "
+                "Output strictly valid HTML, Tailwind CSS, and vanilla JavaScript. "
+                "Never output conversational filler, markdown formatting tags, or explanations. Only output code."
+            )
+            human_text = (
+                f"Existing Code:\n```html\n{existing_code}\n```\n\n"
+                f"Refinement Instruction:\n{refinement_instruction}\n\n"
+                "Provide the complete updated webpage code."
+            )
+            sanitized_human_text, redacted_pii = sanitize_pii(human_text)
+
+            stream_enabled = on_token is not None
+            if hasattr(self.model, "create_chat_completion"):
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": sanitized_human_text},
+                ]
+                completion = self.model.create_chat_completion(
+                    messages=messages,
+                    max_tokens=self.config.max_context_tokens,
+                    stream=stream_enabled,
+                )
+                if stream_enabled:
+                    raw_chunks = []
+                    for chunk in completion:
+                        delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                        if delta:
+                            raw_chunks.append(delta)
+                            on_token(delta)
+                    raw_text = "".join(raw_chunks)
+                    tokens_used = len(raw_text) // 4
+                else:
+                    raw_text = completion["choices"][0]["message"]["content"]
+                    tokens_used = completion.get("usage", {}).get("total_tokens", len(raw_text) // 4)
+            else:
+                prompt = f"{system_prompt}\n\nHuman: {sanitized_human_text}"
+                completion = self.model(
+                    prompt,
+                    max_tokens=self.config.max_context_tokens,
+                    stop=["```\n\n"],
+                    stream=stream_enabled,
+                )
+                if stream_enabled:
+                    raw_chunks = []
+                    for chunk in completion:
+                        delta = chunk.get("choices", [{}])[0].get("text", "")
+                        if delta:
+                            raw_chunks.append(delta)
+                            on_token(delta)
+                    raw_text = "".join(raw_chunks)
+                    tokens_used = len(raw_text) // 4
+                else:
+                    raw_text = completion["choices"][0]["text"]
+                    tokens_used = completion.get("usage", {}).get("total_tokens", len(raw_text) // 4)
+
+            extracted = extract_html(raw_text)
+            final_html = wrap_in_airgap_sandbox(extracted) if self.config.enforce_csp else extracted
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+
+            return GenerationResult(
+                html_code=final_html,
+                semantic_description=f"Refinement: {refinement_instruction}",
+                redacted_pii=redacted_pii,
+                tokens_used=tokens_used,
+                latency_ms=elapsed_ms,
+            )
+        except (RuntimeError, MemoryError) as mem_err:
+            logger.error("Out of Memory error encountered during refinement: %s", mem_err)
+            raise OutOfMemoryInferenceError(f"Refinement aborted due to VRAM/RAM exhaustion: {mem_err}") from mem_err
+
 
 
 # Alias for backward compatibility
